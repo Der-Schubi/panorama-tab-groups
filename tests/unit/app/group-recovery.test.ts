@@ -142,6 +142,43 @@ describe('app/group-recovery.ts', () => {
       );
     });
 
+    it('puts a tab the extension has never seen in the active group of its window, so that a switch of groups does not hide it for good', async () => {
+      const env = setUp();
+      await env.groupState.setGroups(1, [group(1), group(2)]);
+      await env.groupState.setActiveGroup(1, 2);
+      env.tabs.setDetails([tab(10, 1), tab(11, 1)]);
+      await env.groupState.setTabGroup(11, 1);
+
+      await env.recovery.initializeTabGroupAssignments();
+
+      expect(await env.groupState.getTabGroup(10)).toBe(2);
+      expect(await env.groupState.getTabGroup(11)).toBe(1);
+      expect(env.logger.debug).toHaveBeenCalledWith(
+        '[Initialization] Tab 10 has no group, assigning to active group 2',
+      );
+      expect(env.logger.debug).toHaveBeenCalledWith(
+        '[Initialization] Complete: 1 recovered, 0 assigned to ungrouped',
+      );
+    });
+
+    it.each([
+      ['has been deleted', 7],
+      ['is the group for ungrouped tabs', -2],
+      ['is the view', -1],
+    ])(
+      'puts a tab that has no group in the group for ungrouped tabs when the active group %s',
+      async (_, activeGroup) => {
+        const env = setUp();
+        await env.groupState.setGroups(1, [group(1)]);
+        await env.groupState.setActiveGroup(1, activeGroup);
+        env.tabs.setDetails([tab(10, 1)]);
+
+        await env.recovery.initializeTabGroupAssignments();
+
+        expect(await env.groupState.getTabGroup(10)).toBe(-2);
+      },
+    );
+
     it.each([[-1], [-2]])(
       'keeps the reserved group %i of a tab',
       async (reserved) => {

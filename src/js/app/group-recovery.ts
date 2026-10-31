@@ -1,6 +1,7 @@
 import {
   INITIALIZATION_TIMEOUT_MS,
   isReservedGroupId,
+  isValidUserGroupId,
   VIEWER_GROUP_ID,
   SHOW_LOADING_UI_AFTER_MS,
   UNGROUPED_GROUP_ID,
@@ -95,10 +96,22 @@ export function createGroupRecovery({
     tabId: number,
     groups: readonly Group[],
     sessionAvailable: boolean,
+    activeGroup: number | undefined,
   ): Promise<Tally> {
     const stored = sessionAvailable ? await storedGroupOf(tabId) : undefined;
 
     if (stored === undefined) {
+      // A tab the extension has never seen, such as one sent from another
+      // device while the browser was starting, joins the active group like
+      // any new tab does. The group for ungrouped tabs is never shown by a
+      // switch of groups, so a tab put there would stay hidden.
+      if (sessionAvailable && activeGroup !== undefined) {
+        logger.debug(
+          `[Initialization] Tab ${String(tabId)} has no group, assigning to active group ${String(activeGroup)}`,
+        );
+        await groupState.setTabGroup(tabId, activeGroup);
+        return { recoveredTabs: 0, assignedToUngrouped: 0 };
+      }
       await groupState.setTabGroup(tabId, UNGROUPED_GROUP_ID);
       return { recoveredTabs: 0, assignedToUngrouped: 1 };
     }
@@ -129,9 +142,20 @@ export function createGroupRecovery({
     // Storing the groups makes sure the group for ungrouped tabs is there
     await groupState.setGroups(windowId, groups);
 
+    // The group new tabs of the window join, if it is one that exists
+    const stored = await groupState.getActiveGroup(windowId);
+    const activeGroup =
+      stored !== undefined &&
+      isValidUserGroupId(stored) &&
+      groups.some(({ id }) => id === stored)
+        ? stored
+        : undefined;
+
     const windowTabs = await tabs.listInWindow(windowId);
     const tallies = await Promise.all(
-      windowTabs.map(({ id }) => recoverTab(id, groups, sessionAvailable)),
+      windowTabs.map(({ id }) =>
+        recoverTab(id, groups, sessionAvailable, activeGroup),
+      ),
     );
     logger.debug(
       `[Initialization] Window ${String(windowId)}: processed ${String(windowTabs.length)} tabs`,
